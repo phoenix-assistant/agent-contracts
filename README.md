@@ -1,74 +1,263 @@
-# Agent Contracts — Design by Contract for AI Agent Steps
+# Agent Contracts
 
-> Runtime preconditions, postconditions, and invariants for AI agent execution. Catch silent corruption the moment it happens.
+[![npm version](https://img.shields.io/npm/v/@phoenixaihub/agent-contracts)](https://www.npmjs.com/package/@phoenixaihub/agent-contracts)
+[![CI](https://github.com/phoenix-assistant/agent-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/phoenix-assistant/agent-contracts/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](tsconfig.json)
 
-## Problem
+**Design by Contract for AI Agent Steps.**
 
-AI agents execute multi-step workflows where each step can silently corrupt state. An agent modifies the wrong file, introduces a syntax error, or changes something it shouldn't have touched — and nobody notices until the end of the run (or worse, production).
-
-Current solutions:
-- **Guardrails** tell agents what they CAN'T do (input/output validation, content filters)
-- **Specs/evals** verify AFTER the full run whether the output matches intent
-- **Prompt engineering** asks the LLM to "be careful" (unreliable)
-
-**Nobody verifies correctness DURING execution, step by step, with deterministic checks.**
-
-## Solution
-
-Agent Contracts brings Bertrand Meyer's Design by Contract (1986) to AI agent execution:
+Runtime preconditions, postconditions, and invariants for agent execution. Catch silent corruption the moment it happens — not after the full run.
 
 ```typescript
-import { contract, pre, post, invariant } from '@phoenixaihub/agent-contracts';
+import { contract, fileExists, testsPass, projectCompiles } from '@phoenixaihub/agent-contracts';
 
-const editFunction = contract('edit-function', {
-  pre: [
-    fileExists('src/utils.ts'),
-    fileParseable('src/utils.ts', 'typescript'),
-    functionExists('src/utils.ts', 'calculateTotal'),
-  ],
-  post: [
-    functionModified('src/utils.ts', 'calculateTotal'),
-    noOtherFunctionsChanged('src/utils.ts', 'calculateTotal'),
-    testsPass('npm test'),
-  ],
-  invariant: [
-    projectCompiles('npx tsc --noEmit'),
-    noNewLintErrors('npx eslint src/'),
-  ],
+const editContract = contract('edit-function', {
+  pre: [fileExists('src/utils.ts'), fileContains('src/utils.ts', 'calculateTotal')],
+  post: [testsPass('npm test')],
+  invariant: [projectCompiles('npx tsc --noEmit')],
 });
 
-// Wrap your agent step
-const result = await editFunction.execute(async () => {
-  return await agent.editFile('src/utils.ts', instructions);
+const result = await editContract.execute(async () => {
+  return await agent.edit('src/utils.ts', instructions);
+});
+// If ANY check fails → ContractViolationError with structured diagnostics
+```
+
+## Why
+
+AI agents execute multi-step workflows. Each step can silently corrupt state: modify the wrong file, introduce syntax errors, break something unrelated. Current tools don't catch this:
+
+| Tool | What It Does | The Gap |
+|------|-------------|---------|
+| **Guardrails AI** | Input/output validation | Validates format, not execution correctness |
+| **Ouroboros** | Spec-first agents | Post-hoc evaluation — checks at the end |
+| **NeMo Guardrails** | Conversational rails | Dialog safety, not code verification |
+| **LangSmith** | Observability | Sees what happened, doesn't prevent bad steps |
+| **Pydantic AI** | Type-safe agents | Validates data shapes, not side-effects |
+| **Agent Contracts** | **Step-level contracts** | **Verifies correctness DURING execution** |
+
+Agent Contracts brings [Bertrand Meyer's Design by Contract](https://en.wikipedia.org/wiki/Design_by_contract) (1986) to AI agents. Contracts are **deterministic, programmatic checks** — no LLM in the verification loop.
+
+## Install
+
+```bash
+npm install @phoenixaihub/agent-contracts
+```
+
+## Quick Start
+
+### 1. Define a Contract
+
+```typescript
+import {
+  contract,
+  fileExists,
+  fileContains,
+  commandSucceeds,
+  consoleReporter,
+} from '@phoenixaihub/agent-contracts';
+
+const editContract = contract('edit-function', {
+  // Must be true BEFORE the step runs
+  pre: [
+    fileExists('src/utils.ts'),
+    fileContains('src/utils.ts', 'calculateTotal'),
+  ],
+  // Must be true AFTER the step runs
+  post: [
+    fileContains('src/utils.ts', 'calculateTotal'),  // function still exists
+    commandSucceeds('npm test'),                       // tests still pass
+  ],
+  // Must be true BEFORE and AFTER
+  invariant: [
+    commandSucceeds('npx tsc --noEmit'),  // always compiles
+  ],
+}, {
+  reporters: [consoleReporter({ verbose: true })],
+  onViolation: 'throw',
 });
 ```
 
-**Key insight:** Contracts are deterministic, programmatic checks. No LLM in the verification loop. A `fileExists` check either passes or fails — no hallucination possible.
+### 2. Execute Under Contract
 
-## Why Now
+```typescript
+const result = await editContract.execute(async () => {
+  // Your agent step here
+  return await agent.edit('src/utils.ts', 'Add error handling');
+});
 
-| Signal | Evidence |
-|--------|----------|
-| "Agents need control flow, not more prompts" | 484 HN points (May 7, 2026) |
-| Normalization of deviance | Simon Willison: "I'm not reviewing every line anymore" |
-| Production incidents | Coinbase major outage day after CEO said non-engineers shipping code with AI |
-| Spec-first momentum | Ouroboros (3.7K⭐) validates specs but evaluation is post-hoc |
-| Context discipline trending | context-mode (14K⭐, 2.4K downloads/week) |
+console.log(result.success);      // true if all checks passed
+console.log(result.violations);   // [] if clean
+console.log(result.durationMs);   // total time including checks
+```
 
-The industry is rapidly adopting AI agents for code changes, but the verification layer between "agent acted" and "action was correct" doesn't exist yet.
+### 3. Handle Violations
 
-## Market Landscape
+```typescript
+import { ContractViolationError } from '@phoenixaihub/agent-contracts';
 
-| Tool | What It Does | Gap |
-|------|-------------|-----|
-| **Guardrails AI** | Input/output validation for LLM calls | Prompt-level, not step-level. Validates format, not correctness. |
-| **Ouroboros** | Spec-first agent development | Post-hoc evaluation. Checks at the end, not during. |
-| **NeMo Guardrails** | Conversational rails (NVIDIA) | Dialog safety, not code execution verification. |
-| **LangSmith** | Observability & tracing | Sees what happened. Doesn't prevent bad steps. |
-| **Pydantic AI** | Type-safe agent framework | Validates data shapes, not execution side-effects. |
-| **Agent Contracts** | **Runtime step contracts** | **Verifies correctness DURING execution with deterministic checks** |
+try {
+  await editContract.execute(async () => { /* ... */ });
+} catch (err) {
+  if (err instanceof ContractViolationError) {
+    for (const v of err.violations) {
+      console.error(`[${v.phase}] ${v.checkName}: ${v.message}`);
+    }
+  }
+}
+```
 
-## Technical Architecture
+## Built-in Checks
+
+### File Checks
+
+| Check | Description |
+|-------|-------------|
+| `fileExists(path)` | File exists |
+| `fileNotExists(path)` | File does not exist |
+| `fileContains(path, pattern)` | File contains string or regex |
+| `fileNotContains(path, pattern)` | File does NOT contain string or regex |
+| `fileParseable(path, language)` | File parses as json or typescript |
+| `fileSizeWithin(path, min, max)` | File size within byte range |
+| `fileUnchanged(path)` | File unchanged between invariant checks |
+
+### Process Checks
+
+| Check | Description |
+|-------|-------------|
+| `commandSucceeds(cmd)` | Command exits 0 |
+| `commandOutputContains(cmd, pattern)` | Command output contains string/regex |
+| `testsPass(cmd)` | Test suite passes (semantic alias) |
+| `projectCompiles(cmd)` | Compilation succeeds (semantic alias) |
+| `noNewLintErrors(cmd)` | No new lint violations |
+
+### Git Checks
+
+| Check | Description |
+|-------|-------------|
+| `noUnstagedChanges()` | Working tree clean |
+| `onlyFilesChanged(patterns)` | Only specific files modified |
+| `noOtherFilesChanged(patterns)` | Protected files NOT modified |
+| `commitMessageMatches(pattern)` | Commit message matches format |
+
+### Custom Checks
+
+```typescript
+import { createCheck, check, allOf, anyOf, not } from '@phoenixaihub/agent-contracts';
+
+// Simple boolean check
+const isReady = check('is-ready', () => database.isConnected());
+
+// Async check with structured result
+const hasMinRows = createCheck('min-rows', async (ctx) => {
+  const count = await db.count('users');
+  return {
+    passed: count >= 100,
+    message: `${count} rows (need ≥100)`,
+    durationMs: 0,
+  };
+});
+
+// Composable
+const safeToMigrate = allOf('safe-to-migrate', [
+  fileExists('migrations/latest.sql'),
+  not(fileContains('migrations/latest.sql', 'DROP TABLE')),
+]);
+
+const hasBackup = anyOf('has-backup', [
+  fileExists('backups/latest.sql.gz'),
+  fileExists('backups/latest.dump'),
+]);
+```
+
+## YAML DSL
+
+Define contracts in YAML files — no TypeScript needed for contract definitions:
+
+```yaml
+# contracts/edit-function.yaml
+name: edit-function
+pre:
+  - check: file-exists
+    params:
+      path: src/utils.ts
+  - check: file-parseable
+    params:
+      path: src/utils.ts
+      language: typescript
+post:
+  - check: tests-pass
+    params:
+      cmd: npm test
+invariant:
+  - check: project-compiles
+    params:
+      cmd: npx tsc --noEmit
+```
+
+```typescript
+import { loadContract } from '@phoenixaihub/agent-contracts';
+
+const contract = await loadContract('contracts/edit-function.yaml');
+const result = await contract.execute(async () => { /* ... */ });
+```
+
+## Reporters
+
+| Reporter | Output |
+|----------|--------|
+| `consoleReporter()` | Formatted stdout/stderr |
+| `jsonReporter({ outputPath })` | Structured JSON file |
+| `githubActionsReporter()` | `::error` / `::warning` annotations |
+| `callbackReporter({ onViolation })` | Custom callbacks |
+
+```typescript
+const c = contract('my-step', spec, {
+  reporters: [
+    consoleReporter({ verbose: true }),
+    jsonReporter({ outputPath: 'contract-results.json' }),
+    githubActionsReporter(),
+  ],
+});
+```
+
+## Violation Handling
+
+| Mode | Behavior |
+|------|----------|
+| `'throw'` | Throws `ContractViolationError` (default) |
+| `'warn'` | Logs warning, continues |
+| `'report'` | Silent — violations collected in result |
+
+```typescript
+// Collect all violations without stopping
+const c = contract('audit', spec, {
+  onViolation: 'report',
+  continueOnFailure: true,
+});
+const result = await c.execute(step);
+console.log(`${result.violations.length} violations found`);
+```
+
+## Standalone Verification
+
+Verify conditions without executing a step:
+
+```typescript
+const c = contract('check-state', {
+  pre: [fileExists('config.json'), fileParseable('config.json', 'json')],
+  invariant: [commandSucceeds('npx tsc --noEmit')],
+});
+
+// Check just preconditions
+const preResult = await c.verifyPre();
+
+// Check just invariants
+const invResult = await c.verifyInvariants();
+```
+
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -80,111 +269,76 @@ The industry is rapidly adopting AI agents for code changes, but the verificatio
 ┌─────────────────────────────────────────────┐
 │           Contract Runtime                   │
 │  ┌─────────┐ ┌──────────┐ ┌─────────────┐  │
-│  │  @pre() │ │ @post()  │ │ @invariant()│  │
+│  │  pre()  │ │  post()  │ │ invariant() │  │
 │  └────┬────┘ └────┬─────┘ └──────┬──────┘  │
-│       │           │              │          │
 │       ▼           ▼              ▼          │
 │  ┌─────────────────────────────────────┐    │
 │  │        Verification Engine          │    │
-│  │  • Snapshot state before step       │    │
-│  │  • Run precondition checks          │    │
-│  │  • Execute agent step               │    │
-│  │  • Run postcondition checks         │    │
-│  │  • Verify invariants hold           │    │
-│  │  • Emit structured violation report │    │
-│  └─────────────────────────────────────┘    │
-│                    │                         │
-│                    ▼                         │
-│  ┌─────────────────────────────────────┐    │
-│  │         Contract Registry           │    │
-│  │  • YAML / TypeScript DSL            │    │
-│  │  • Built-in check library           │    │
-│  │  • Custom check plugins             │    │
+│  │  1. Snapshot state                  │    │
+│  │  2. Run preconditions               │    │
+│  │  3. Execute agent step              │    │
+│  │  4. Run postconditions              │    │
+│  │  5. Verify invariants               │    │
+│  │  6. Emit violation reports          │    │
 │  └─────────────────────────────────────┘    │
 └──────────────────┬──────────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────────┐
-│            Violation Reporter               │
-│  • Structured JSON reports                  │
-│  • CI integration (exit codes)              │
-│  • GitHub Action annotations                │
-│  • Console / file / webhook output          │
+│  Reporters: Console | JSON | GitHub Actions │
 └─────────────────────────────────────────────┘
 ```
 
-## Build Plan
+## API Reference
 
-| Week | Milestone | Deliverables |
-|------|-----------|-------------|
-| 1 | Core Engine | Contract runtime, pre/post/invariant decorators, verification engine, built-in checks (file, process, git) |
-| 2 | DSL & Registry | YAML contract definitions, contract registry, check plugin system, TypeScript DSL |
-| 3 | Integrations & CI | GitHub Action, CLI runner, LangChain/CrewAI adapters, structured reporters |
-| 4 | Polish & Ship | Comprehensive tests, documentation, examples, npm publish, v0.1.0 release |
+### `contract(name, spec, options?)`
 
-## Built-in Check Library
+Create a contract for an agent step.
 
-### File Checks
-- `fileExists(path)` — File exists at path
-- `fileNotExists(path)` — File does not exist
-- `fileParseable(path, language)` — File parses without syntax errors
-- `fileContains(path, content)` — File contains string/regex
-- `fileMatchesSnapshot(path)` — File matches saved snapshot
-- `fileSizeWithin(path, min, max)` — File size in range
+- **name** `string` — contract identifier
+- **spec** `ContractSpec` — `{ pre?, post?, invariant? }` arrays of checks
+- **options** `ContractOptions`:
+  - `cwd` — working directory (default: `process.cwd()`)
+  - `onViolation` — `'throw'` | `'warn'` | `'report'` (default: `'throw'`)
+  - `reporters` — array of Reporter instances
+  - `checkTimeout` — per-check timeout in ms (default: 30000)
+  - `continueOnFailure` — check all conditions even after failure (default: false)
 
-### Git Checks
-- `noUnstagedChanges()` — Working tree clean
-- `onlyFilesChanged(patterns)` — Only specific files modified
-- `noOtherFilesChanged(patterns)` — Specific files NOT modified
-- `commitMessageMatches(pattern)` — Commit message format
+### `ContractResult<T>`
 
-### Process Checks
-- `commandSucceeds(cmd)` — Command exits 0
-- `commandOutputContains(cmd, expected)` — Command output matches
-- `testsPass(cmd)` — Test suite passes
-- `projectCompiles(cmd)` — Compilation succeeds
-- `noNewLintErrors(cmd)` — No new lint violations
-
-### Function Checks
-- `functionExists(file, name)` — Function/method exists in file
-- `functionModified(file, name)` — Function was changed
-- `noOtherFunctionsChanged(file, except)` — Only target function changed
-- `exportExists(file, name)` — Module export exists
-
-### Custom Checks
 ```typescript
-import { Check } from '@phoenixaihub/agent-contracts';
-
-const dbRowCount = Check.create('db-row-count', async (ctx) => {
-  const count = await db.query('SELECT COUNT(*) FROM users');
-  return count >= ctx.params.min;
-}, { params: { min: { type: 'number' } } });
+{
+  success: boolean;
+  value?: T;                    // step return value
+  stepError?: Error;            // error FROM the step
+  violations: Violation[];      // all contract violations
+  verification: {
+    pre: VerificationResult;
+    post: VerificationResult;
+    invariantBefore: VerificationResult;
+    invariantAfter: VerificationResult;
+  };
+  durationMs: number;
+}
 ```
 
-## Risks & Mitigations
+### `Violation`
 
-| Risk | Likelihood | Mitigation |
-|------|-----------|------------|
-| Contracts too verbose for adoption | Medium | YAML DSL, sensible defaults, preset contract packs |
-| Performance overhead per step | Low | Checks are simple I/O ops; async parallel where possible |
-| Framework integration complexity | Medium | Start with generic wrapper, add framework-specific adapters later |
-| "Just use tests" objection | High | Clear messaging: contracts verify agent BEHAVIOR, tests verify code CORRECTNESS. Orthogonal. |
+```typescript
+{
+  contractName: string;
+  phase: 'pre' | 'post' | 'invariant';
+  checkName: string;
+  message: string;
+  details?: Record<string, unknown>;
+  timestamp: string;
+}
+```
 
-## Monetization Path
+## Contributing
 
-1. **Open core** — Core runtime, built-in checks, CLI: MIT open source
-2. **Pro checks** — Advanced checks (AST diff, semantic code comparison, security scanning): paid
-3. **Cloud dashboard** — Centralized contract violation monitoring across teams: SaaS
-4. **Enterprise** — Custom check development, on-prem, SSO: enterprise license
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
-## Verdict
+## License
 
-### 🟢 BUILD
-
-**Why:**
-- Clear gap: nobody does runtime step-level verification for agents
-- Grounded in established CS (DbC, 1986) — not hype
-- Pain is real and growing (Coinbase incident, Willison quote)
-- Low technical risk (deterministic checks, no ML needed)
-- High signal from adjacent tools (Ouroboros 3.7K⭐, context-mode 14K⭐)
-- First-mover advantage in a category that WILL exist
+MIT — see [LICENSE](LICENSE).

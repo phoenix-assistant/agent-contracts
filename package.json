@@ -1,0 +1,73 @@
+{
+  "name": "@phoenixaihub/agent-contracts",
+  "version": "0.1.0",
+  "description": "Design by Contract for AI Agent Steps — runtime preconditions, postconditions, and invariants for agent execution",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./checks": {
+      "types": "./dist/checks/index.d.ts",
+      "import": "./dist/checks/index.mjs",
+      "require": "./dist/checks/index.js"
+    },
+    "./reporters": {
+      "types": "./dist/reporters/index.d.ts",
+      "import": "./dist/reporters/index.mjs",
+      "require": "./dist/reporters/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ai-agents",
+    "design-by-contract",
+    "contracts",
+    "preconditions",
+    "postconditions",
+    "invariants",
+    "agent-verification",
+    "runtime-checks",
+    "langchain",
+    "crewai",
+    "autogen"
+  ],
+  "author": "Phoenix AI Hub <phoenixai.hub@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/phoenix-assistant/agent-contracts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/phoenix-assistant/agent-contracts/issues"
+  },
+  "homepage": "https://github.com/phoenix-assistant/agent-contracts#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^3.0.0"
+  }
+}
